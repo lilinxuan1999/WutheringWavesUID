@@ -2,15 +2,19 @@ import re
 from typing import List
 
 from gsuid_core.logger import logger
-from ..utils.api.model import RoleDetailData
+
+from ..utils.waves_api import waves_api
+from ..utils.waves_card_cache import get_card
+from ..utils.api.model import RoleDetailData, EquipPhantomData
+from ..utils.resource.constant import SPECIAL_CHAR, SONATA_FIRST_ID
 from ..utils.ascension.sonata import WavesSonataResult, get_sonata_detail
 from ..utils.ascension.weapon import WavesWeaponResult, get_weapon_detail
 from ..utils.name_convert import (
     alias_to_sonata_name,
     alias_to_weapon_name,
+    char_name_to_char_id,
     weapon_name_to_weapon_id,
 )
-from ..utils.resource.constant import SONATA_FIRST_ID
 
 phantom_main_value = [
     {"name": "攻击", "values": ["18%", "30%", "33%"]},
@@ -23,6 +27,40 @@ phantom_main_value = [
     {"name": "治疗效果加成", "values": ["0%", "0%", "26.4%"]},
 ]
 phantom_main_value_map = {i["name"]: i["values"] for i in phantom_main_value}
+
+
+async def get_remote_role_detail_info(find_char_id: List[str], waves_id, ck):
+    role_detail_info = await get_card(waves_id)
+    if role_detail_info:
+        role_detail_info = next(
+            (
+                role
+                for role in role_detail_info
+                if str(role.role.roleId) in find_char_id
+            ),
+            None,
+        )
+
+    if not role_detail_info:
+        for char_id in find_char_id:
+            succ, role_detail_info = await waves_api.get_role_detail_info(
+                char_id, waves_id, ck
+            )
+            if (
+                not succ
+                or "role" not in role_detail_info
+                or role_detail_info["role"] is None
+                or "level" not in role_detail_info
+                or role_detail_info["level"] is None
+            ):
+                return None
+            if role_detail_info["phantomData"]["cost"] == 0:
+                role_detail_info["phantomData"]["equipPhantomList"] = None
+
+            role_detail_info = RoleDetailData(**role_detail_info)
+            break
+
+    return role_detail_info
 
 
 class ReplaceRole:
@@ -53,6 +91,15 @@ class ReplaceSonata:
         self.sonataName: str | None = None  # 套装名字
 
 
+class PhantomInfo:
+
+    def __init__(self):
+        self.uid: str | None = None  # 谁的
+        self.charName: str | None = None  # 哪个角色身上的
+        self.positions: List[str] | None = None  # 哪些位置
+        self.toPositions: List[str] | None = None  # 到哪个位置
+
+
 class ReplacePhantom:
     PREFIX_RE: list[str] = ["声骸", "圣遗物"]
 
@@ -62,6 +109,7 @@ class ReplacePhantom:
         self.mainc4: List[str] | None = None  # 主词条更换
         self.mainc3: List[str] | None = None  # 主词条更换
         self.mainc1: List[str] | None = None  # 主词条更换
+        self.phantomList: List[PhantomInfo] | None = None
 
 
 class ReplaceResult:
@@ -212,6 +260,50 @@ def parse_main(content: str) -> list[tuple[str, list[str], str]]:
     return results
 
 
+def parse_phantom_position(
+    content: str,
+) -> list[PhantomInfo]:
+    # 修改正则表达式，使位置转换部分变为可选
+    position_pattern = r"(?:(\d+))?([\u4e00-\u9fa5]+)(?:\s*(\d)到(\d))*"
+    position_matches = re.finditer(position_pattern, content)
+    results = []
+
+    for match in position_matches:
+        base_content = match.group(0)
+        uid = match.group(1)
+        role_name = match.group(2)
+
+        phantom_info = PhantomInfo()
+        phantom_info.uid = uid
+        phantom_info.charName = role_name
+        phantom_info.positions = []
+        phantom_info.toPositions = []
+
+        # 如果存在位置转换信息，则解析
+        if "到" in base_content:
+            transfer_pattern = r"(\d)到(\d)"
+            transfer_matches = re.finditer(transfer_pattern, base_content)
+            for transfer in transfer_matches:
+                position = transfer.group(1)
+                to_position = transfer.group(2)
+                if (
+                    position
+                    and to_position
+                    and int(position) <= 5
+                    and int(to_position) <= 5
+                    and int(position) >= 1
+                    and int(to_position) >= 1
+                ):
+                    phantom_info.positions.append(position)
+                    phantom_info.toPositions.append(to_position)
+
+        # 无论是否有位置信息，只要有角色名就添加到结果中
+        if phantom_info.charName:
+            results.append(phantom_info)
+
+    return results
+
+
 def get_breach(level: int):
     if level <= 20:
         breach = 0
@@ -324,6 +416,18 @@ class ChangeParser:
 
     def parse_phantom(self, cont: str) -> list[str]:
         matched_list = [f"换{self.rr.phantom.PREFIX_RE[0]}"]
+        # 使用抽象的位置解析函数
+        phantom_info_list = parse_phantom_position(cont)
+        if phantom_info_list:
+            self.rr.phantom.phantomList = phantom_info_list
+            for phantom_info in phantom_info_list:
+                matched_list.append(
+                    f"{phantom_info.uid if phantom_info.uid else ''}{phantom_info.charName}"
+                    f"{' '.join(f'{p}到{t}' for p, t in zip(phantom_info.positions, phantom_info.toPositions))}"
+                )
+            return matched_list
+
+        # 原有的主词条解析逻辑
         main_results = parse_main(cont)
         for main_result in main_results:
             matched_string, attr_list, position = main_result
@@ -341,7 +445,7 @@ class ChangeParser:
 
 
 async def change_role_detail(
-    role_detail: RoleDetailData, change_list_regex: str
+    waves_id: str, ck: str, role_detail: RoleDetailData, change_list_regex: str
 ) -> tuple[RoleDetailData, str]:
     parser: ChangeParser = ChangeParser(change_list_regex)
     parserResult: ReplaceResult = parser.rr
@@ -413,6 +517,10 @@ async def change_role_detail(
                         sonata_result.name, []
                     )[0]
 
+    if parserResult.phantom.phantomList:
+        for ph_info in parserResult.phantom.phantomList:
+            await change_role_phantom(waves_id, ck, role_detail, ph_info)
+
     logger.debug(
         f"声骸主词条: c4-{parserResult.phantom.mainc4}， c3-{parserResult.phantom.mainc3}, c1-{parserResult.phantom.mainc1}"
     )
@@ -421,6 +529,8 @@ async def change_role_detail(
         mainc = parserResult.phantom.mainc4
         if role_detail.phantomData and role_detail.phantomData.equipPhantomList:
             for ep in role_detail.phantomData.equipPhantomList:
+                if not ep:
+                    continue
                 if ep.cost != 4:
                     continue
                 props = ep.mainProps
@@ -436,6 +546,8 @@ async def change_role_detail(
         mainc = parserResult.phantom.mainc3
         if role_detail.phantomData and role_detail.phantomData.equipPhantomList:
             for ep in role_detail.phantomData.equipPhantomList:
+                if not ep:
+                    continue
                 if ep.cost != 3:
                     continue
                 props = ep.mainProps
@@ -456,6 +568,8 @@ async def change_role_detail(
         mainc = parserResult.phantom.mainc1
         if role_detail.phantomData and role_detail.phantomData.equipPhantomList:
             for ep in role_detail.phantomData.equipPhantomList:
+                if not ep:
+                    continue
                 if ep.cost != 1:
                     continue
                 props = ep.mainProps
@@ -470,33 +584,72 @@ async def change_role_detail(
     return role_detail, parser.get_matched_content()
 
 
-def test_change_parser():
-    test_cases = [
-        "换武器90级5精炼 换角色技能等级 10 10 10 10 16命等级100 技能等级 10 10 10 10 1",
-        "换武器5谐振90级 换角色技能等级 8 9 1 1 1满命等级9级 ",
-        "换武器折枝专武精炼5 换角色三命等级80 技能等级 7 7 7 7 7",
-        "换角色6命 换武器折枝专武 技能等级 6 5 4 3 2",
-        "换武器90级 换角色命座6 换人物等级90 技能等级 3 2 1",
-        "换角色等级50 换角色2命",
-        "换武器80级3精炼",
-        "换角色等级70 换武器90级 换角色4命",
-        "换武器 换角色",
-        "换武器90级 换角色命座6 换人物等级90 额外信息",
-        # 新增测试用例
-        "换声骸主词条4暴击暴伤",
-        "换声骸mainc3双攻击",
-        "换声骸主c1属性",
-        "换合鸣寒冰套装",
-        "换套装寒冰",
-        "换角色90级6命 换武器90级5精炼 换声骸主词条4暴击 换合鸣寒冰",
-        "换声骸主词条4双属性 换合鸣寒冰 换角色90级",
-        "换声骸主词条1双攻击 换声骸主词条3暴击 换声骸主词条4暴伤",
-    ]
+async def change_role_phantom(
+    waves_id: str, ck: str, role_detail: RoleDetailData, phantom: PhantomInfo
+):
+    parserCharName = phantom.charName
+    parserWavesUid = phantom.uid
+    parserPositions = phantom.positions
+    parserToPositions = phantom.toPositions
 
-    for _, test_case in enumerate(test_cases):
-        parser = ChangeParser(test_case)
-        matched_content = parser.get_matched_content()
-        print(f"Matched Content: {matched_content}")
+    logger.debug(
+        f"change_role_phantom {parserWavesUid}{parserCharName}{parserPositions}到{parserToPositions}"
+    )
 
+    char_id = char_name_to_char_id(parserCharName)
+    find_char_id = []
+    if char_id in SPECIAL_CHAR:
+        find_char_id = SPECIAL_CHAR[char_id]
+    elif char_id:
+        find_char_id = [char_id]
+    if parserWavesUid:
+        waves_id = parserWavesUid
 
-# test_change_parser()
+    if not find_char_id:
+        return
+
+    remote_role_detail_info = await get_remote_role_detail_info(
+        find_char_id, waves_id, ck
+    )
+    if not remote_role_detail_info:
+        return
+    if (
+        not remote_role_detail_info.phantomData
+        or not remote_role_detail_info.phantomData.equipPhantomList
+    ):
+        return
+
+    if not parserPositions or not parserPositions:
+        role_detail.phantomData = remote_role_detail_info.phantomData
+    else:
+        if not role_detail.phantomData or not role_detail.phantomData.equipPhantomList:
+            role_detail.phantomData = EquipPhantomData(
+                **{
+                    "cost": 0,
+                    "equipPhantomList": [None, None, None, None, None],
+                }
+            )
+
+        for parserPosition, parserToPosition in zip(parserPositions, parserToPositions):
+            new = remote_role_detail_info.phantomData.equipPhantomList[
+                int(parserPosition) - 1
+            ]
+            newCost = 0
+            if new:
+                newCost = new.cost
+
+            old = role_detail.phantomData.equipPhantomList[int(parserToPosition) - 1]
+            oldCost = 0
+            if old:
+                oldCost = old.cost
+
+            totalCost = 0
+            for eq in role_detail.phantomData.equipPhantomList:
+                if not eq:
+                    continue
+                totalCost += eq.cost
+
+            if totalCost - oldCost + newCost <= 12:
+                role_detail.phantomData.equipPhantomList[int(parserToPosition) - 1] = (
+                    new
+                )
