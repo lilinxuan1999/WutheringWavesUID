@@ -2,11 +2,7 @@ import re
 from typing import List
 
 from gsuid_core.logger import logger
-
-from ..utils.waves_api import waves_api
-from ..utils.waves_card_cache import get_card
 from ..utils.api.model import RoleDetailData, EquipPhantomData
-from ..utils.resource.constant import SPECIAL_CHAR, SONATA_FIRST_ID
 from ..utils.ascension.sonata import WavesSonataResult, get_sonata_detail
 from ..utils.ascension.weapon import WavesWeaponResult, get_weapon_detail
 from ..utils.name_convert import (
@@ -15,6 +11,9 @@ from ..utils.name_convert import (
     char_name_to_char_id,
     weapon_name_to_weapon_id,
 )
+from ..utils.resource.constant import SPECIAL_CHAR, SONATA_FIRST_ID
+from ..utils.waves_api import waves_api
+from ..utils.waves_card_cache import get_card
 
 phantom_main_value = [
     {"name": "攻击", "values": ["18%", "30%", "33%"]},
@@ -99,6 +98,9 @@ class PhantomInfo:
         self.positions: List[str] | None = None  # 哪些位置
         self.toPositions: List[str] | None = None  # 到哪个位置
 
+    def __str__(self):
+        return f"{self.uid} {self.charName} {self.positions} {self.toPositions}"
+
 
 class ReplacePhantom:
     PREFIX_RE: list[str] = ["声骸", "圣遗物"]
@@ -109,7 +111,10 @@ class ReplacePhantom:
         self.mainc4: List[str] | None = None  # 主词条更换
         self.mainc3: List[str] | None = None  # 主词条更换
         self.mainc1: List[str] | None = None  # 主词条更换
-        self.phantomList: List[PhantomInfo] | None = None
+        self.phantomList: List[PhantomInfo] = []
+
+    def __str__(self):
+        return f"{self.mainc4} {self.mainc3} {self.mainc1} \n {[str(phantom) for phantom in self.phantomList]}"
 
 
 class ReplaceResult:
@@ -419,13 +424,12 @@ class ChangeParser:
         # 使用抽象的位置解析函数
         phantom_info_list = parse_phantom_position(cont)
         if phantom_info_list:
-            self.rr.phantom.phantomList = phantom_info_list
+            self.rr.phantom.phantomList.extend(phantom_info_list)
             for phantom_info in phantom_info_list:
                 matched_list.append(
                     f"{phantom_info.uid if phantom_info.uid else ''}{phantom_info.charName}"
                     f"{' '.join(f'{p}到{t}' for p, t in zip(phantom_info.positions, phantom_info.toPositions))}"
                 )
-            return matched_list
 
         # 原有的主词条解析逻辑
         main_results = parse_main(cont)
@@ -497,28 +501,9 @@ async def change_role_detail(
     if parserResult.weapon.resonLevel:
         role_detail.weaponData.resonLevel = int(parserResult.weapon.resonLevel)
 
-    if parserResult.sonata.sonataName:
-        sonata_result: WavesSonataResult | None = get_sonata_detail(
-            parserResult.sonata.sonataName
-        )
-        if (
-            sonata_result
-            and role_detail.phantomData
-            and role_detail.phantomData.equipPhantomList
-        ):
-            for index, ep in enumerate(role_detail.phantomData.equipPhantomList):
-                if not ep:
-                    continue
-                ep.fetterDetail.name = sonata_result.name
-                if index == 0 and ep.phantomProp.phantomId not in SONATA_FIRST_ID.get(
-                    sonata_result.name, []
-                ):
-                    ep.phantomProp.phantomId = SONATA_FIRST_ID.get(
-                        sonata_result.name, []
-                    )[0]
-
     if parserResult.phantom.phantomList:
         for ph_info in parserResult.phantom.phantomList:
+            logger.debug(f"[GsCore] 声骸替换：{ph_info}")
             await change_role_phantom(waves_id, ck, role_detail, ph_info)
 
     logger.debug(
@@ -581,6 +566,25 @@ async def change_role_detail(
                 props[0].attributeValue = phantom_main_value_map[mainc[index]][0]
                 index += 1
 
+    if parserResult.sonata.sonataName:
+        sonata_result: WavesSonataResult | None = get_sonata_detail(
+            parserResult.sonata.sonataName
+        )
+        if (
+            sonata_result
+            and role_detail.phantomData
+            and role_detail.phantomData.equipPhantomList
+        ):
+            for index, ep in enumerate(role_detail.phantomData.equipPhantomList):
+                if not ep:
+                    continue
+                ep.fetterDetail.name = sonata_result.name
+                if index == 0 and ep.phantomProp.phantomId not in SONATA_FIRST_ID.get(
+                    sonata_result.name, []
+                ):
+                    ep.phantomProp.phantomId = SONATA_FIRST_ID.get(
+                        sonata_result.name, []
+                    )[0]
     return role_detail, parser.get_matched_content()
 
 
