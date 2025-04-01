@@ -23,6 +23,7 @@ from ..error_reply import (
     WAVES_CODE_101,
     WAVES_CODE_107,
     WAVES_CODE_109,
+    WAVES_CODE_998,
     WAVES_CODE_999,
 )
 from ..hint import error_reply
@@ -75,8 +76,16 @@ async def _check_response(
             msg = f"\n鸣潮账号id: 【{roleId}】未绑定库街区!!!\n1.是否注册过库街区\n2.库街区能否查询当前鸣潮账号数据\n"
             return False, error_reply(WAVES_CODE_109, msg)
 
+        logger.warning(f"msg: {res.get('msg')} - data: {res.get('data')}")
+
+        if res.get("msg") and ("重新登录" in res["msg"] or "登录已过期" in res["msg"]):
+            return False, res.get("msg", "登录已过期")
+
+        if res.get("msg") and "访问被阻断" in res["msg"]:
+            return False, error_reply(WAVES_CODE_998)
+
         if res.get("msg"):
-            return False, res["msg"]
+            return False, error_reply(WAVES_CODE_999)
     return False, error_reply(WAVES_CODE_999)
 
 
@@ -135,16 +144,16 @@ class WavesApi:
         ck = await self.get_self_waves_ck(uid, user_id)
         if ck:
             return True, ck
-        ck = await self.get_ck(uid, user_id)
+        ck = await self.get_waves_random_cookie(uid, user_id)
         return False, ck
 
-    async def get_ck(
-        self, uid: str, user_id, mode: Literal["OWNER", "RANDOM"] = "RANDOM"
-    ) -> Optional[str]:
-        if mode == "RANDOM":
-            return await self.get_waves_random_cookie(uid, user_id)
-        else:
-            return await self.get_self_waves_ck(uid, user_id)
+    # async def _get_ck(
+    #     self, uid: str, user_id, mode: Literal["OWNER", "RANDOM"] = "RANDOM"
+    # ) -> Optional[str]:
+    #     if mode == "RANDOM":
+    #         return await self.get_waves_random_cookie(uid, user_id)
+    #     else:
+    #         return await self.get_self_waves_ck(uid, user_id)
 
     async def get_self_waves_ck(self, uid: str, user_id) -> Optional[str]:
         cookie = await WavesUser.select_cookie(user_id, uid)
@@ -154,20 +163,21 @@ class WavesApi:
         if not await WavesUser.cookie_validate(uid):
             return ""
 
-        succ, _ = await self.refresh_data(uid, cookie)
-        if not succ:
+        succ, data = await self.refresh_data(uid, cookie)
+        if succ:
+            return cookie
+
+        if "重新登录" in data or "登录已过期" in data:
             await WavesUser.mark_invalid(cookie, "无效")
-            # 返回空串 表示绑定已失效
             return ""
 
-        return cookie
+        if isinstance(data, str):
+            logger.warning(f"[{uid}] 获取ck失败: {data}")
+
+        # 返回空串 表示绑定已失效
+        return ""
 
     async def get_waves_random_cookie(self, uid: str, user_id: str) -> Optional[str]:
-        # 有绑定自己CK 并且该CK有效的前提下，优先使用自己CK
-        ck = await self.get_self_waves_ck(uid, user_id)
-        if ck:
-            return ck
-
         if WutheringWavesConfig.get_config("WavesOnlySelfCk").data:
             return None
 
@@ -175,13 +185,24 @@ class WavesApi:
         user_list = await WavesUser.get_waves_all_user()
         random.shuffle(user_list)
         ck_list = []
+        times = 1
         for user in user_list:
             if not await WavesUser.cookie_validate(user.uid):
                 continue
-            succ, _ = await self.refresh_data(user.uid, user.cookie)
+            succ, data = await self.refresh_data(user.uid, user.cookie)
             if not succ:
-                await WavesUser.mark_invalid(user.cookie, "无效")
+                if "重新登录" in data or "登录已过期" in data:
+                    await WavesUser.mark_invalid(user.cookie, "无效")
+
+                if "封禁" in data:
+                    break
+
+                if times <= 0:
+                    break
+
+                times -= 1
                 continue
+
             ck_list.append(user.cookie)
             break
 
@@ -448,10 +469,13 @@ class WavesApi:
         )
         return await _check_response(raw_data, roleId)
 
-    @timed_async_cache(86400)
+    @timed_async_cache(
+        86400,
+        lambda x: x[0] and isinstance(x[1], (dict, list)),
+    )
     async def get_online_list_role(self, token: str) -> tuple[bool, Union[Dict, str]]:
         """所有的角色列表"""
-        header = copy.deepcopy(await get_headers())
+        header = copy.deepcopy(await get_headers(token))
         header.update({"token": token})
         data = {}
         raw_data = await self._waves_request(
@@ -459,10 +483,13 @@ class WavesApi:
         )
         return await _check_response(raw_data)
 
-    @timed_async_cache(86400)
+    @timed_async_cache(
+        86400,
+        lambda x: x[0] and isinstance(x[1], (dict, list)),
+    )
     async def get_online_list_weapon(self, token: str) -> tuple[bool, Union[Dict, str]]:
         """所有的武器列表"""
-        header = copy.deepcopy(await get_headers())
+        header = copy.deepcopy(await get_headers(token))
         header.update({"token": token})
         data = {}
         raw_data = await self._waves_request(
@@ -470,12 +497,15 @@ class WavesApi:
         )
         return await _check_response(raw_data)
 
-    @timed_async_cache(86400)
+    @timed_async_cache(
+        86400,
+        lambda x: x[0] and isinstance(x[1], (dict, list)),
+    )
     async def get_online_list_phantom(
         self, token: str
     ) -> tuple[bool, Union[Dict, str]]:
         """所有的声骸列表"""
-        header = copy.deepcopy(await get_headers())
+        header = copy.deepcopy(await get_headers(token))
         header.update({"token": token})
         data = {}
         raw_data = await self._waves_request(

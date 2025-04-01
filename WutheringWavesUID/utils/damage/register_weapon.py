@@ -1,6 +1,7 @@
 from ..damage.abstract import WavesWeaponRegister, WeaponAbstract
 from .damage import DamageAttribute, calc_percent_expression
 from .utils import (
+    CHAR_ATTR_SIERRA,
     Spectro_Frazzle_Role_Ids,
     attack_damage,
     hit_damage,
@@ -32,6 +33,16 @@ class Weapon_21010015(WeaponAbstract):
     id = 21010015
     type = 1
     name = "浩境粼光"
+
+    # 施放共鸣技能时，共鸣解放伤害加成提升7%，可叠加3层，持续12秒
+    def cast_skill(self, attr: DamageAttribute, isGroup: bool = False):
+        """施放共鸣技能"""
+        if attr.char_damage != liberation_damage:
+            return
+        dmg = f"{self.param(1)}*{self.param(2)}"
+        title = self.get_title()
+        msg = f"施放共鸣技能时，共鸣解放伤害加成提升{dmg}"
+        attr.add_dmg_bonus(calc_percent_expression(dmg), title, msg)
 
 
 class Weapon_21010016(WeaponAbstract):
@@ -284,8 +295,10 @@ class Weapon_21020026(WeaponAbstract):
         """造成普攻伤害"""
         if attr.char_damage != attack_damage:
             return
-
-        dmg = f"{self.weapon_detail.param[1][self.weapon_reson_level - 1]}*{self.weapon_detail.param[3][self.weapon_reson_level - 1]}+{self.weapon_detail.param[4][self.weapon_reson_level - 1]}"
+        if attr.role and attr.role.role.roleId == 1603:
+            dmg = f"{self.weapon_detail.param[1][self.weapon_reson_level - 1]}*{self.weapon_detail.param[3][self.weapon_reson_level - 1]}+{self.weapon_detail.param[4][self.weapon_reson_level - 1]}"
+        else:
+            dmg = f"{self.weapon_detail.param[1][self.weapon_reson_level - 1]}*{self.weapon_detail.param[3][self.weapon_reson_level - 1]}"
         title = self.get_title()
         msg = f"普攻伤害加成提升{dmg}"
         attr.add_dmg_bonus(calc_percent_expression(dmg), title, msg)
@@ -334,6 +347,31 @@ class Weapon_21020044(WeaponAbstract):
     id = 21020044
     type = 2
     name = "不归孤军"
+
+
+class Weapon_21020046(WeaponAbstract):
+    id = 21020046
+    type = 2
+    name = "血誓盟约"
+
+    def cast_healing(self, attr: DamageAttribute, isGroup: bool = False):
+        """施放治疗"""
+        if attr.char_damage != skill_damage:
+            return
+        dmg = f"{self.param(0)}"
+        title = self.get_title()
+        msg = f"造成治疗时，自身共鸣技能伤害提升{dmg}"
+        attr.add_dmg_bonus(calc_percent_expression(dmg), title, msg)
+
+    def cast_skill(self, attr: DamageAttribute, isGroup: bool = False):
+        """施放共鸣技能"""
+        if attr.char_attr != CHAR_ATTR_SIERRA:
+            return
+        if attr.role and attr.role.role.roleId in [1406, 1408]:
+            dmg = f"{self.param(2)}"
+            title = self.get_title()
+            msg = f"风主施放共鸣技能时，附近队伍中登场角色气动伤害加深{dmg}"
+            attr.add_dmg_deepen(calc_percent_expression(dmg), title, msg)
 
 
 class Weapon_21020053(WeaponAbstract):
@@ -747,6 +785,8 @@ class Weapon_21050026(WeaponAbstract):
                 count_e = effect_value.count("e")
 
                 buff_layer = min(buff_layer, count_e)
+            else:
+                buff_layer = 1
 
             dmg = f"{self.param(1)}*{buff_layer}"
             title = self.get_title()
@@ -830,6 +870,32 @@ class Weapon_21050053(WeaponAbstract):
     name = "戍关音感仪·留光"
 
 
+class Weapon_21050056(WeaponAbstract):
+    id = 21050056
+    type = 5
+    name = "海的呢喃"
+
+    """
+    攻击提升12%。施放变奏技能或普攻后10秒内，施放声骸技能时，获得1层【柔软的梦】，同名声骸只可触发一次，最多可叠加2层，持续10秒，叠加至2层后施放声骸技能不刷新持续时间。该效果10秒内最多生效1次，若切换至其他角色则该效果提前结束。
+    第1层：普攻伤害加成提升40%；
+    第2层：无视目标12%湮灭属性抗性。
+    """
+
+    def cast_attack(self, attr: DamageAttribute, isGroup: bool = False):
+        """造成普攻伤害"""
+        if attr.char_damage == attack_damage:
+            dmg = f"{self.param(6)}"
+            title = self.get_title()
+            msg = f"普攻伤害加成提升{dmg}"
+            attr.add_dmg_bonus(calc_percent_expression(dmg), title, msg)
+
+        if attr.role and attr.role.role.roleId == 1607:
+            dmg = f"{self.param(8)}"
+            title = self.get_title()
+            msg = f"无视目标{dmg}%湮灭属性抗性"
+            attr.add_enemy_resistance(-calc_percent_expression(dmg), title, msg)
+
+
 class Weapon_21050064(WeaponAbstract):
     id = 21050064
     type = 5
@@ -895,6 +961,7 @@ def register_weapon():
     WavesWeaponRegister.register_class(Weapon_21020034.id, Weapon_21020034)
     WavesWeaponRegister.register_class(Weapon_21020043.id, Weapon_21020043)
     WavesWeaponRegister.register_class(Weapon_21020044.id, Weapon_21020044)
+    WavesWeaponRegister.register_class(Weapon_21020046.id, Weapon_21020046)
     WavesWeaponRegister.register_class(Weapon_21020053.id, Weapon_21020053)
     WavesWeaponRegister.register_class(Weapon_21020064.id, Weapon_21020064)
     WavesWeaponRegister.register_class(Weapon_21020074.id, Weapon_21020074)
@@ -948,6 +1015,7 @@ def register_weapon():
     WavesWeaponRegister.register_class(Weapon_21050044.id, Weapon_21050044)
     WavesWeaponRegister.register_class(Weapon_21050046.id, Weapon_21050046)
     WavesWeaponRegister.register_class(Weapon_21050053.id, Weapon_21050053)
+    WavesWeaponRegister.register_class(Weapon_21050056.id, Weapon_21050056)
     WavesWeaponRegister.register_class(Weapon_21050064.id, Weapon_21050064)
     WavesWeaponRegister.register_class(Weapon_21050074.id, Weapon_21050074)
     WavesWeaponRegister.register_class(Weapon_21050084.id, Weapon_21050084)

@@ -1,15 +1,17 @@
 import re
-from typing import List
+from typing import Dict, List, Optional
 
 from gsuid_core.logger import logger
 
 from ..utils.api.model import EquipPhantomData, RoleDetailData
+from ..utils.api.model_other import EnemyDetailData
 from ..utils.ascension.sonata import WavesSonataResult, get_sonata_detail
 from ..utils.ascension.weapon import WavesWeaponResult, get_weapon_detail
 from ..utils.name_convert import (
     alias_to_sonata_name,
     alias_to_weapon_name,
     char_name_to_char_id,
+    easy_id_to_name,
     weapon_name_to_weapon_id,
 )
 from ..utils.resource.constant import SONATA_FIRST_ID, SPECIAL_CHAR
@@ -29,15 +31,15 @@ phantom_main_value = [
 phantom_main_value_map = {i["name"]: i["values"] for i in phantom_main_value}
 
 
-async def get_remote_role_detail_info(find_char_id: List[str], waves_id, ck):
-    role_detail_info = await get_card(waves_id)
-    if role_detail_info:
+async def get_remote_role_detail_info(
+    find_char_id: List[str], waves_id, ck
+) -> Optional[RoleDetailData]:
+    role_detail_info = None
+
+    gen_temp = await get_card(waves_id)  # type: ignore
+    if gen_temp:
         role_detail_info = next(
-            (
-                role
-                for role in role_detail_info
-                if str(role.role.roleId) in find_char_id
-            ),
+            (role for role in gen_temp if str(role.role.roleId) in find_char_id),
             None,
         )
 
@@ -48,6 +50,7 @@ async def get_remote_role_detail_info(find_char_id: List[str], waves_id, ck):
             )
             if (
                 not succ
+                or not isinstance(role_detail_info, Dict)
                 or "role" not in role_detail_info
                 or role_detail_info["role"] is None
                 or "level" not in role_detail_info
@@ -117,12 +120,21 @@ class ReplacePhantom:
         return f"{self.mainc4} {self.mainc3} {self.mainc1} \n {[str(phantom) for phantom in self.phantomList]}"
 
 
+class ReplaceEnemy:
+    PREFIX_RE: list[str] = ["敌人", "环境", "怪", "怪物", "敌人信息", "怪物信息"]
+
+    def __init__(self):
+        self.enemyLevel: str | None = None  # 敌人等级
+        self.enemyResistance: str | None = None  # 敌人抗性
+
+
 class ReplaceResult:
     def __init__(self):
         self.role: ReplaceRole = ReplaceRole()
         self.weapon: ReplaceWeapon = ReplaceWeapon()
         self.sonata: ReplaceSonata = ReplaceSonata()
         self.phantom: ReplacePhantom = ReplacePhantom()
+        self.enemy: ReplaceEnemy = ReplaceEnemy()
 
 
 def parse_chain(content: str) -> tuple[str, str] | None:
@@ -177,6 +189,16 @@ def parse_level(content: str) -> tuple[str, str] | None:
     return None
 
 
+def parse_three_level(content: str) -> tuple[str, str] | None:
+    pattern = r"(?:(等级|级)([1-9][0-9]?[0-9]?)|([1-9][0-9]?[0-9]?)(等级|级))"
+    match = re.search(pattern, content)
+    if match:
+        matched_string = match.group(0)
+        level = match.group(2) or match.group(3)
+        return matched_string, level
+    return None
+
+
 def parse_skills(content: str) -> list[int] | None:
     pattern = r"(技能等级|天赋|技能)\s*((?:\d{1,2}\s*){1,5})"
     match = re.search(pattern, content)
@@ -200,6 +222,16 @@ def parse_sonatas(content: str) -> str | None:
         type1 = match.group(1).strip()
         return type1
 
+    return None
+
+
+def parse_enemy_resistance(content: str) -> tuple[str, str] | None:
+    pattern = r"(?:(抗性|抗)([-+]?[0-9][0-9]?)|([-+]?[0-9][0-9]?)(抗性|抗))"
+    match = re.search(pattern, content)
+    if match:
+        matched_string = match.group(0)
+        level = match.group(2) or match.group(3)
+        return matched_string, level
     return None
 
 
@@ -284,7 +316,7 @@ def parse_phantom_position(
         role_name = match.group(2)
 
         phantom_info = PhantomInfo()
-        phantom_info.uid = uid
+        phantom_info.uid = uid if uid and len(uid) == 9 else None
         phantom_info.charName = role_name
         phantom_info.positions = []
         phantom_info.toPositions = []
@@ -365,6 +397,11 @@ class ChangeParser:
                 cont = cont[len(prefix) :].strip()
                 matched_list.extend(self.parse_sonata(cont))
                 break
+        for prefix in self.rr.enemy.PREFIX_RE:
+            if cont.startswith(prefix):
+                cont = cont[len(prefix) :].strip()
+                matched_list.extend(self.parse_enemy(cont))
+                break
 
         if matched_list:
             self.matched_segments.append(" ".join(matched_list))
@@ -430,6 +467,8 @@ class ChangeParser:
         if phantom_info_list:
             self.rr.phantom.phantomList.extend(phantom_info_list)
             for phantom_info in phantom_info_list:
+                if not phantom_info.positions or not phantom_info.toPositions:
+                    continue
                 matched_list.append(
                     f"{phantom_info.uid if phantom_info.uid else ''}{phantom_info.charName}"
                     f"{' '.join(f'{p}到{t}' for p, t in zip(phantom_info.positions, phantom_info.toPositions))}"
@@ -448,12 +487,33 @@ class ChangeParser:
             matched_list.append(matched_string)
         return matched_list
 
+    def parse_enemy(self, cont: str) -> list[str]:
+        matched_list = [f"换{self.rr.enemy.PREFIX_RE[0]}"]
+        level = parse_three_level(cont)
+        if level:
+            matched_string, level_value = level
+            self.rr.enemy.enemyLevel = level_value
+            cont = cont.replace(matched_string, "")
+            matched_list.append(matched_string)
+        enemy_resistance = parse_enemy_resistance(cont)
+        if enemy_resistance:
+            matched_string, resistance_value = enemy_resistance
+            self.rr.enemy.enemyResistance = resistance_value
+            cont = cont.replace(matched_string, "")
+            matched_list.append(matched_string)
+
+        return matched_list
+
     def get_matched_content(self) -> str:
         return ";".join(self.matched_segments)
 
 
 async def change_role_detail(
-    waves_id: str, ck: str, role_detail: RoleDetailData, change_list_regex: str
+    waves_id: str,
+    ck: str,
+    role_detail: RoleDetailData,
+    enemy_detail: EnemyDetailData,
+    change_list_regex: str,
 ) -> tuple[RoleDetailData, str]:
     parser: ChangeParser = ChangeParser(change_list_regex)
     parserResult: ReplaceResult = parser.rr
@@ -478,8 +538,6 @@ async def change_role_detail(
                 temp.unlocked = False
 
         for chainNum, temp in enumerate(role_detail.chainList, start=1):
-            print(temp)
-            print(type(temp))
             if chainNum <= chain:
                 temp.unlocked = True
             else:
@@ -589,6 +647,16 @@ async def change_role_detail(
                     ep.phantomProp.phantomId = SONATA_FIRST_ID.get(
                         sonata_result.name, []
                     )[0]
+                    ep.phantomProp.name = easy_id_to_name(
+                        str(ep.phantomProp.phantomId), ep.phantomProp.name
+                    )
+
+    # 敌人
+    if parserResult.enemy.enemyResistance:
+        enemy_detail.enemy_resistance = int(parserResult.enemy.enemyResistance)
+    if parserResult.enemy.enemyLevel:
+        enemy_detail.enemy_level = int(parserResult.enemy.enemyLevel)
+
     return role_detail, parser.get_matched_content()
 
 
@@ -604,7 +672,7 @@ async def change_role_phantom(
         f"change_role_phantom {parserWavesUid}{parserCharName}{parserPositions}到{parserToPositions}"
     )
 
-    char_id = char_name_to_char_id(parserCharName)
+    char_id = char_name_to_char_id(parserCharName) if parserCharName else None
     find_char_id = []
     if char_id in SPECIAL_CHAR:
         find_char_id = SPECIAL_CHAR[char_id]
@@ -621,13 +689,14 @@ async def change_role_phantom(
     )
     if not remote_role_detail_info:
         return
+
     if (
         not remote_role_detail_info.phantomData
         or not remote_role_detail_info.phantomData.equipPhantomList
     ):
         return
 
-    if not parserPositions or not parserPositions:
+    if not parserPositions or not parserToPositions:
         role_detail.phantomData = remote_role_detail_info.phantomData
     else:
         if not role_detail.phantomData or not role_detail.phantomData.equipPhantomList:
@@ -646,18 +715,20 @@ async def change_role_phantom(
             if new:
                 newCost = new.cost
 
-            old = role_detail.phantomData.equipPhantomList[int(parserToPosition) - 1]
+            temp = role_detail.phantomData.equipPhantomList
+            if not temp:
+                continue
+
+            old = temp[int(parserToPosition) - 1]
             oldCost = 0
             if old:
                 oldCost = old.cost
 
             totalCost = 0
-            for eq in role_detail.phantomData.equipPhantomList:
+            for eq in temp:
                 if not eq:
                     continue
                 totalCost += eq.cost
 
             if totalCost - oldCost + newCost <= 12:
-                role_detail.phantomData.equipPhantomList[int(parserToPosition) - 1] = (
-                    new
-                )
+                temp[int(parserToPosition) - 1] = new  # type: ignore

@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from typing import Dict, Optional
 
+import httpx
 from PIL import Image, ImageDraw, ImageEnhance
 
 from gsuid_core.logger import logger
@@ -17,6 +18,8 @@ from ..utils.api.model import (
     RoleDetailData,
     WeaponData,
 )
+from ..utils.api.model_other import EnemyDetailData
+from ..utils.api.wwapi import ONE_RANK_URL, OneRankRequest, OneRankResponse
 from ..utils.ascension.char import get_char_model
 from ..utils.ascension.template import get_template_data
 from ..utils.ascension.weapon import (
@@ -34,7 +37,7 @@ from ..utils.calculate import (
     get_total_score_bg,
     get_valid_color,
 )
-from ..utils.char_info_utils import get_all_role_detail_info
+from ..utils.char_info_utils import get_all_roleid_detail_info
 from ..utils.damage.abstract import DamageDetailRegister
 from ..utils.error_reply import WAVES_CODE_102
 from ..utils.fonts.waves_fonts import (
@@ -79,6 +82,7 @@ from ..utils.resource.constant import (
     DEAFAULT_WEAPON_ID,
     SPECIAL_CHAR,
     WEAPON_TYPE_ID_MAP,
+    get_short_name,
 )
 from ..utils.resource.download_file import (
     get_chain_img,
@@ -87,6 +91,7 @@ from ..utils.resource.download_file import (
 )
 from ..utils.waves_api import waves_api
 from ..wutheringwaves_config import PREFIX
+from ..wutheringwaves_config.wutheringwaves_config import WutheringWavesConfig
 from .role_info_change import change_role_detail
 
 TEXT_PATH = Path(__file__).parent / "texture2d"
@@ -156,8 +161,28 @@ damage_bar1 = Image.open(TEXT_PATH / "damage_bar1.png")
 damage_bar2 = Image.open(TEXT_PATH / "damage_bar2.png")
 
 
-def is_limit_user(uid):
-    return uid == "1"
+async def get_one_rank(item: OneRankRequest) -> Optional[OneRankResponse]:
+    WavesToken = WutheringWavesConfig.get_config("WavesToken").data
+
+    if not WavesToken:
+        return
+
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.post(
+                ONE_RANK_URL,
+                json=item.dict(),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {WavesToken}",
+                },
+                timeout=httpx.Timeout(10),
+            )
+            # logger.debug(f"获取排行: {res.text}")
+            if res.status_code == 200:
+                return OneRankResponse.model_validate(res.json())
+        except Exception as e:
+            logger.exception(f"获取排行失败: {e}")
 
 
 def parse_text_and_number(text):
@@ -178,6 +203,7 @@ async def ph_card_draw(
     img,
     is_draw=True,
     change_command="",
+    enemy_detail: Optional[EnemyDetailData] = None,
 ):
     char_name = role_detail.role.roleName
 
@@ -188,14 +214,18 @@ async def ph_card_draw(
     ph_0 = Image.open(TEXT_PATH / "ph_0.png")
     ph_1 = Image.open(TEXT_PATH / "ph_1.png")
     #  phantom_sum_value = {}
-    calc = WuWaCalc(role_detail)
+    calc = WuWaCalc(role_detail, enemy_detail)
     if role_detail.phantomData and role_detail.phantomData.equipPhantomList:
         equipPhantomList = role_detail.phantomData.equipPhantomList
         phantom_score = 0
 
         calc.phantom_pre = calc.prepare_phantom()
         calc.phantom_card = calc.enhance_summation_phantom_value(calc.phantom_pre)
-        calc.calc_temp = get_calc_map(calc.phantom_card, role_detail.role.roleName)
+        calc.calc_temp = get_calc_map(
+            calc.phantom_card,
+            role_detail.role.roleName,
+            role_detail.role.roleId,
+        )
 
         for i, _phantom in enumerate(equipPhantomList):
             sh_temp = Image.new("RGBA", (350, 550))
@@ -227,8 +257,9 @@ async def ph_card_draw(
                     .replace("（", " ")
                     .replace("）", "")
                 )
+                short_name = get_short_name(_phantom.phantomProp.phantomId, phantomName)
                 sh_temp_draw.text(
-                    (130, 40), f"{phantomName}", SPECIAL_GOLD, waves_font_28, "lm"
+                    (130, 40), f"{short_name}", SPECIAL_GOLD, waves_font_28, "lm"
                 )
 
                 # 声骸等级背景
@@ -380,7 +411,7 @@ async def get_role_need(
     if waves_id:
         query_list = [char_id]
         if char_id in SPECIAL_CHAR:
-            query_list = SPECIAL_CHAR.copy()
+            query_list = SPECIAL_CHAR.copy()[char_id]
 
         for char_id in query_list:
             succ, role_detail_info = await waves_api.get_role_detail_info(
@@ -409,16 +440,26 @@ async def get_role_need(
             )
     else:
         avatar = await draw_pic_with_ring(ev, is_force_avatar, force_resource_id)
-        if is_limit_query:
-            uid = "1"
         all_role_detail: Optional[Dict[str, RoleDetailData]] = (
-            await get_all_role_detail_info(uid)
+            await get_all_roleid_detail_info(uid)
         )
 
-        if all_role_detail and char_name in all_role_detail:
-            role_detail: RoleDetailData = all_role_detail[char_name]
+        if char_id in SPECIAL_CHAR:
+            query_list = SPECIAL_CHAR.copy()[char_id]
         else:
-            if is_online_user:
+            query_list = [char_id]
+
+        for temp_char_id in query_list:
+            if all_role_detail and temp_char_id in all_role_detail:
+                role_detail: RoleDetailData = all_role_detail[temp_char_id]
+                break
+        else:
+            if is_limit_query:
+                return (
+                    None,
+                    f"[鸣潮] 未找到【{char_name}】角色极限面板信息，请等待适配!\n",
+                )
+            elif is_online_user:
                 return (
                     None,
                     f"[鸣潮] 未找到【{char_name}】角色信息, 请先使用[{PREFIX}刷新面板]进行刷新!\n",
@@ -600,17 +641,19 @@ async def draw_char_detail_img(
         if damageId and not damageDetail:
             return f"[鸣潮] 角色【{char_name}】暂不支持伤害计算！\n"
 
-    ck = await waves_api.get_ck(uid, user_id)
-    if not ck:
-        return hint.error_reply(WAVES_CODE_102)
-
     is_online_user = False
-    succ, online_list = await waves_api.get_online_list_role(ck)
-    if succ and online_list:
-        online_list_role_model = OnlineRoleList.model_validate(online_list)
-        online_role_map = {str(i.roleId): i for i in online_list_role_model}
-        if char_id in online_role_map:
-            is_online_user = True
+    ck = ""
+    if not is_limit_query:
+        _, ck = await waves_api.get_ck_result(uid, user_id)
+        if not ck:
+            return hint.error_reply(WAVES_CODE_102)
+
+        succ, online_list = await waves_api.get_online_list_role(ck)
+        if succ and online_list:
+            online_list_role_model = OnlineRoleList.model_validate(online_list)
+            online_role_map = {str(i.roleId): i for i in online_list_role_model}
+            if char_id in online_role_map:
+                is_online_user = True
 
     # 账户数据
     if waves_id:
@@ -626,7 +669,7 @@ async def draw_char_detail_img(
         account_info = AccountBaseInfo.model_validate(
             {
                 "name": "库洛交个朋友",
-                "id": 1,
+                "id": uid,
                 "level": 100,
                 "worldLevel": 10,
                 "creatTime": 1739375719,
@@ -650,15 +693,26 @@ async def draw_char_detail_img(
         return role_detail
 
     change_command = ""
+    oneRank: Optional[OneRankResponse] = None
+    enemy_detail: Optional[EnemyDetailData] = EnemyDetailData()
     if change_list_regex:
         temp = copy.deepcopy(role_detail)
         try:
             role_detail, change_command = await change_role_detail(
-                uid, ck, role_detail, change_list_regex
+                uid, ck, role_detail, enemy_detail, change_list_regex
             )
         except Exception as e:
             logger.exception("角色数据转换错误", e)
             role_detail = temp
+    else:
+        if not is_limit_query:
+            # 非极限查询时，获取评分排名
+            oneRank = await get_one_rank(
+                OneRankRequest(char_id=int(char_id), waves_id=uid)
+            )
+            if oneRank and len(oneRank.data) > 0:
+                dd_len += 60 * 2
+
     # 创建背景
     img = get_waves_bg(
         1200, 1250 + echo_list + ph_sum_value + jineng_len + dd_len, "bg3"
@@ -767,7 +821,7 @@ async def draw_char_detail_img(
 
     # 声骸
     calc: WuWaCalc = await ph_card_draw(
-        ph_sum_value, jineng_len, role_detail, img, isDraw, change_command
+        ph_sum_value, jineng_len, role_detail, img, isDraw, change_command, enemy_detail
     )
     calc.role_card = calc.enhance_summation_card_value(calc.phantom_card)
 
@@ -817,6 +871,53 @@ async def draw_char_detail_img(
                 damage_bar_draw.text(
                     (850, 50), f"{expected_damage}", "white", waves_font_24, "mm"
                 )
+            img.alpha_composite(
+                damage_bar,
+                dest=(0, 2600 + ph_sum_value + jineng_len + (dindex + 1) * 60),
+            )
+
+        if oneRank and len(oneRank.data) > 0:
+            dindex += 1
+            damage_bar = damage_bar2.copy() if dindex % 2 == 0 else damage_bar1.copy()
+            damage_bar_draw = ImageDraw.Draw(damage_bar)
+            damage_bar_draw = ImageDraw.Draw(damage_bar)
+            damage_bar_draw.text(
+                (400, 50),
+                "评分排名",
+                "white",
+                waves_font_24,
+                "rm",
+            )
+            damage_bar_draw.text(
+                (850, 50),
+                f"{oneRank.data[0].rank}",
+                SPECIAL_GOLD,
+                waves_font_24,
+                "mm",
+            )
+            img.alpha_composite(
+                damage_bar,
+                dest=(0, 2600 + ph_sum_value + jineng_len + (dindex + 1) * 60),
+            )
+
+            dindex += 1
+            damage_bar = damage_bar2.copy() if dindex % 2 == 0 else damage_bar1.copy()
+            damage_bar_draw = ImageDraw.Draw(damage_bar)
+            damage_bar_draw = ImageDraw.Draw(damage_bar)
+            damage_bar_draw.text(
+                (400, 50),
+                "伤害排名",
+                "white",
+                waves_font_24,
+                "rm",
+            )
+            damage_bar_draw.text(
+                (850, 50),
+                f"{oneRank.data[1].rank}",
+                SPECIAL_GOLD,
+                waves_font_24,
+                "mm",
+            )
             img.alpha_composite(
                 damage_bar,
                 dest=(0, 2600 + ph_sum_value + jineng_len + (dindex + 1) * 60),
@@ -975,7 +1076,7 @@ async def draw_char_score_img(
             f"[鸣潮] 角色名【{char}】无法找到, 可能暂未适配, 请先检查输入是否正确！\n"
         )
     char_name = alias_to_char_name(char)
-    ck = await waves_api.get_ck(uid, user_id)
+    _, ck = await waves_api.get_ck_result(uid, user_id)
     if not ck:
         return hint.error_reply(WAVES_CODE_102)
 
@@ -1014,7 +1115,11 @@ async def draw_char_score_img(
 
         calc.phantom_pre = calc.prepare_phantom()
         calc.phantom_card = calc.enhance_summation_phantom_value(calc.phantom_pre)
-        calc.calc_temp = get_calc_map(calc.phantom_card, role_detail.role.roleName)
+        calc.calc_temp = get_calc_map(
+            calc.phantom_card,
+            role_detail.role.roleName,
+            role_detail.role.roleId,
+        )
 
         for i, _phantom in enumerate(equipPhantomList):
             sh_temp = Image.new("RGBA", (600, 1100))
@@ -1045,8 +1150,9 @@ async def draw_char_score_img(
                     .replace("（", " ")
                     .replace("）", "")
                 )
+                short_name = get_short_name(_phantom.phantomProp.phantomId, phantomName)
                 sh_temp_draw.text(
-                    (130, 40), f"{phantomName}", SPECIAL_GOLD, waves_font_28, "lm"
+                    (130, 40), f"{short_name}", SPECIAL_GOLD, waves_font_28, "lm"
                 )
 
                 # 声骸等级背景

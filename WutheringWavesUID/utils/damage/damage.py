@@ -504,8 +504,6 @@ class DamageAttribute:
     def add_enemy_resistance(self, enemy_resistance: float, title="", msg=""):
         """增加敌人抗性百分比"""
         self.enemy_resistance += enemy_resistance
-        if self.enemy_resistance <= 0:
-            self.enemy_resistance = 0
         self.add_effect(title, msg)
         return self
 
@@ -621,6 +619,20 @@ class DamageAttribute:
             + enemy_defense * (1 - self.defense_reduction)
         )
 
+    @property
+    def valid_enemy_resistance(self):
+        """
+        计算敌人抗性减伤比。
+
+        :return: 敌人抗性减伤比
+        """
+        if self.enemy_resistance < 0:
+            return 1 - self.enemy_resistance / 2
+        elif self.enemy_resistance >= 0.8:
+            return 0.2 / (0.2 + self.enemy_resistance)
+        else:
+            return 1 - self.enemy_resistance
+
     def calculate_crit_damage(self, effect_value=None):
         """
         计算暴击伤害。
@@ -637,7 +649,7 @@ class DamageAttribute:
             * (1 + self.skill_ratio_in_skill_description)
             * (1 + self.dmg_bonus)
             * (1 + self.dmg_deepen)
-            * (1 - self.enemy_resistance)
+            * self.valid_enemy_resistance
             * self.defense_ratio
             * self.crit_dmg
         )
@@ -661,7 +673,7 @@ class DamageAttribute:
             * (1 + self.skill_ratio_in_skill_description)
             * (1 + self.dmg_bonus)
             * (1 + self.dmg_deepen)
-            * (1 - self.enemy_resistance)
+            * self.valid_enemy_resistance
             * self.defense_ratio
             * (self.crit_rate * (self.crit_dmg - 1) + 1)
         )
@@ -683,3 +695,10 @@ class DamageAttribute:
         return effect_value * (percent * 0.01) * (1 + self.dmg_bonus) + flat * (
             1 + self.dmg_bonus
         )
+
+
+def check_char_id(attr: DamageAttribute, char_id: Union[int, List[int]]):
+    if isinstance(char_id, int):
+        return attr.role and attr.role.role.roleId == char_id
+    else:
+        return attr.role and attr.role.role.roleId in char_id

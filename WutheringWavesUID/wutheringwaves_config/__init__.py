@@ -4,10 +4,11 @@ from gsuid_core.bot import Bot
 from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.sv import SV, get_plugin_available_prefix
-from .set_config import set_config_func, set_push_value, set_waves_user_value
-from .wutheringwaves_config import WutheringWavesConfig
+
 from ..utils.database.models import WavesBind
 from ..utils.name_convert import alias_to_char_name
+from .set_config import set_config_func, set_waves_user_value
+from .wutheringwaves_config import WutheringWavesConfig
 
 sv_self_config = SV("鸣潮配置")
 
@@ -15,7 +16,7 @@ sv_self_config = SV("鸣潮配置")
 PREFIX = get_plugin_available_prefix("WutheringWavesUID")
 
 
-@sv_self_config.on_prefix((f"开启", f"关闭"))
+@sv_self_config.on_prefix(("开启", "关闭"))
 async def open_switch_func(bot: Bot, ev: Event):
     at_sender = True if ev.group_id else False
     uid = await WavesBind.get_uid_by_game(ev.user_id, ev.bot_id)
@@ -28,7 +29,7 @@ async def open_switch_func(bot: Bot, ev: Event):
 
     ck = await waves_api.get_self_waves_ck(uid, ev.user_id)
     if not ck:
-        from ..utils.error_reply import WAVES_CODE_102, ERROR_CODE
+        from ..utils.error_reply import ERROR_CODE, WAVES_CODE_102
 
         return await bot.send(f"当前特征码：{uid}\n{ERROR_CODE[WAVES_CODE_102]}")
 
@@ -38,7 +39,7 @@ async def open_switch_func(bot: Bot, ev: Event):
     await bot.send(im, at_sender)
 
 
-@sv_self_config.on_prefix(f"设置")
+@sv_self_config.on_prefix("设置")
 async def send_config_ev(bot: Bot, ev: Event):
     at_sender = True if ev.group_id else False
 
@@ -48,20 +49,12 @@ async def send_config_ev(bot: Bot, ev: Event):
             f"您还未绑定鸣潮特征码, 请使用【{PREFIX}绑定uid】 完成绑定！\n", at_sender
         )
 
-    if "阈值" in ev.text:
-        func = "".join(re.findall("[\u4e00-\u9fa5]", ev.text.replace("阈值", "")))
-        value = re.findall(r"\d+", ev.text)
-        value = value[0] if value else None
-
-        if value is None:
-            return await bot.send("请输入正确的阈值数字...\n", at_sender)
-        im = await set_push_value(ev.bot_id, func, uid, int(value))
-    elif "体力背景" in ev.text:
+    if "体力背景" in ev.text:
         from ..utils.waves_api import waves_api
 
         ck = await waves_api.get_self_waves_ck(uid, ev.user_id)
         if not ck:
-            from ..utils.error_reply import WAVES_CODE_102, ERROR_CODE
+            from ..utils.error_reply import ERROR_CODE, WAVES_CODE_102
 
             return await bot.send(
                 f"当前特征码：{uid}\n{ERROR_CODE[WAVES_CODE_102]}", at_sender

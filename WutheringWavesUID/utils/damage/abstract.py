@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import List, Union, Optional
 
 from ...utils.damage.damage import DamageAttribute
 
@@ -131,6 +131,10 @@ class WeaponAbstract(object):
         """光噪效应"""
         pass
 
+    def cast_healing(self, attr: DamageAttribute, isGroup: bool = False):
+        """施放治疗"""
+        pass
+
 
 class EchoAbstract(object):
     name = None
@@ -143,7 +147,7 @@ class EchoAbstract(object):
         """造成伤害"""
         pass
 
-    def do_equipment_first(self):
+    def do_equipment_first(self, role_id: int):
         """首位装备"""
         return {}
 

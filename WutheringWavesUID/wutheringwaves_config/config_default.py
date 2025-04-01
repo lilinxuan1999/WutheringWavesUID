@@ -11,21 +11,6 @@ from gsuid_core.utils.plugins_config.models import (
 )
 
 CONFIG_DEFAULT: Dict[str, GSC] = {
-    "RedisFromUrl": GsStrConfig(
-        "Redis连接配置",
-        "Redis连接配置",
-        "redis://127.0.0.1:6379/0",
-    ),
-    "IsRedisCluster": GsBoolConfig(
-        "Redis集群开关",
-        "Redis集群开关",
-        False,
-    ),
-    "StartServerRedisLoad": GsBoolConfig(
-        "开启后，在启动GsCore时，redis加载排行数据",
-        "开启后，在启动GsCore时，redis加载排行数据",
-        False,
-    ),
     "WavesAnnGroups": GsDictConfig(
         "推送公告群组",
         "鸣潮公告推送群组",
@@ -35,6 +20,11 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "推送公告ID",
         "鸣潮公告推送ID列表",
         [],
+    ),
+    "WavesAnnOpen": GsBoolConfig(
+        "公告推送总开关",
+        "公告推送总开关",
+        True,
     ),
     "WavesRankUseTokenGroup": GsListStrConfig(
         "有token才能进排行，群管理可设置",
@@ -46,43 +36,6 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "无限制进排行，群管理可设置",
         [],
     ),
-    "SignTime": GsListStrConfig(
-        "每晚签到时间设置",
-        "每晚库街区签到时间设置（时，分）",
-        ["0", "10"],
-    ),
-    "SchedSignin": GsBoolConfig(
-        "定时签到",
-        "开启后每晚00:10将开始自动签到任务",
-        True,
-    ),
-    "BBSSchedSignin": GsBoolConfig(
-        "定时库街区每日任务",
-        "开启后每晚00:20将开始自动库街区每日任务",
-        True,
-    ),
-    "PrivateSignReport": GsBoolConfig(
-        "签到私聊报告",
-        "关闭后将不再给任何人推送当天签到任务完成情况",
-        False,
-    ),
-    "GroupSignReport": GsBoolConfig(
-        "签到群组报告",
-        "关闭后将不再给任何群推送当天签到任务完成情况",
-        True,
-    ),
-    "GroupSignReportPic": GsBoolConfig(
-        "签到群组图片报告",
-        "签到以图片形式报告",
-        False,
-    ),
-    "SigninMaster": GsBoolConfig(
-        "全部开启签到",
-        "开启后自动帮登录的人签到",
-        False,
-    ),
-    "SigninConcurrentNum": GsIntConfig("自动签到并发数量", "自动签到并发数量", 5, 50),
-    "CrazyNotice": GsBoolConfig("催命模式", "开启后当达到推送阈值将会一直推送", False),
     "WavesGuideProvideNew": GsStrConfig(
         "角色攻略图提供方",
         "使用ww角色攻略时选择的提供方",
@@ -114,16 +67,11 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "所有查询使用自己的ck",
         False,
     ),
-    "BotRank": GsBoolConfig(
-        "bot排行",
-        "bot排行",
-        False,
-    ),
-    "CardUseOptions": GsStrConfig(
+    "CardUseOptions2": GsStrConfig(
         "排行面板数据启用规则（重启生效）",
         "排行面板数据启用规则",
         "不使用缓存",
-        options=["不使用缓存", "redis缓存", "内存缓存"],
+        options=["不使用缓存", "内存缓存"],
     ),
     "QQPicCache": GsBoolConfig(
         "排行榜qq头像缓存开关",
@@ -148,6 +96,17 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "刷新面板通知文案",
         True,
     ),
+    "RefreshInterval": GsIntConfig(
+        "刷新面板间隔，重启生效（单位秒）",
+        "刷新面板间隔，重启生效（单位秒）",
+        0,
+        600,
+    ),
+    "RefreshIntervalNotify": GsStrConfig(
+        "刷新面板间隔通知文案",
+        "刷新面板间隔通知文案",
+        "请等待{}s后尝试刷新面板！",
+    ),
     "HideUid": GsBoolConfig(
         "隐藏uid",
         "隐藏uid",
@@ -155,5 +114,10 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
     ),
     "MaxBindNum": GsIntConfig(
         "绑定特征码限制数量（未登录）", "绑定特征码限制数量（未登录）", 2, 100
+    ),
+    "WavesToken": GsStrConfig(
+        "鸣潮全排行token",
+        "鸣潮全排行token",
+        "",
     ),
 }

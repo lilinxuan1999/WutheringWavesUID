@@ -25,6 +25,7 @@ ROLE_PILE_PATH = RESOURCE_PATH / "role_pile"
 ROLE_DETAIL_PATH = RESOURCE_PATH / "role_detail"
 ROLE_DETAIL_SKILL_PATH = ROLE_DETAIL_PATH / "skill"
 ROLE_DETAIL_CHAINS_PATH = ROLE_DETAIL_PATH / "chains"
+SHARE_BG_PATH = RESOURCE_PATH / "share"
 
 # 攻略
 GUIDE_PATH = MAIN_PATH / "guide_new"
@@ -46,6 +47,7 @@ GUIDE_CONFIG_MAP = {
 
 # 自定义背景图
 CUSTOM_CARD_PATH = MAIN_PATH / "custom_role_pile"
+CUSTOM_MR_CARD_PATH = MAIN_PATH / "custom_mr_role_pile"
 
 # 其他的素材
 OTHER_PATH = MAIN_PATH / "other"
@@ -73,6 +75,7 @@ def init_dir():
         ROLE_DETAIL_PATH,
         ROLE_DETAIL_SKILL_PATH,
         ROLE_DETAIL_CHAINS_PATH,
+        SHARE_BG_PATH,
         GUIDE_PATH,
         XMU_GUIDE_PATH,
         MOEALKYNE_GUIDE_PATH,
@@ -82,6 +85,7 @@ def init_dir():
         OTHER_PATH,
         CALENDAR_PATH,
         ALIAS_PATH,
+        CUSTOM_MR_CARD_PATH,
     ]:
         i.mkdir(parents=True, exist_ok=True)
 
